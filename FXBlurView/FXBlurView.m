@@ -694,29 +694,11 @@
 
 - (void)updateAsynchronously:(BOOL)async completion:(void (^)())completion
 {
-    if ([self shouldUpdate])
-    {
+    if ([self shouldUpdate]) {
         UIImage *snapshot = [self snapshotOfUnderlyingView];
-        if (async)
-        {
-            dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-
-                UIImage *blurredImage = [self blurredSnapshot:snapshot radius:self.blurRadius];
-                dispatch_sync(dispatch_get_main_queue(), ^{
-
-                    [self setLayerContents:blurredImage];
-                    if (completion) completion();
-                });
-            });
-        }
-        else
-        {
-            [self setLayerContents:[self blurredSnapshot:snapshot radius:[self blurPresentationLayer].blurRadius]];
-            if (completion) completion();
-        }
-    }
-    else if (completion)
-    {
+        [self setLayerContents:[self blurredSnapshot:snapshot radius:[self blurPresentationLayer].blurRadius]];
+        if (completion) completion();
+    } else if (completion) {
         completion();
     }
 }
