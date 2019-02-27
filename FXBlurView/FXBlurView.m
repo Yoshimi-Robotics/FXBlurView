@@ -87,14 +87,25 @@
     }
 
     //create temp buffer
-    void *tempBuffer = malloc((size_t)vImageBoxConvolve_ARGB8888(&buffer1, &buffer2, NULL, 0, 0, boxSize, boxSize,
-                                                                 NULL, kvImageEdgeExtend + kvImageGetTempBufferSize));
-
+    vImage_Error result = vImageBoxConvolve_ARGB8888(&buffer1, &buffer2, NULL, 0, 0, boxSize, boxSize,
+                                                     NULL, kvImageEdgeExtend + kvImageGetTempBufferSize);
+    if (result < kvImageNoError)
+    {
+        free(buffer1.data);
+        free(buffer2.data);
+        return self;
+    }
+    void *tempBuffer = malloc((size_t)result);
+    
+    
     //copy image data
     CGDataProviderRef provider = CGImageGetDataProvider(imageRef);
     CFDataRef dataSource = CGDataProviderCopyData(provider);
     if (NULL == dataSource) 
     {
+        free(buffer1.data);
+        free(buffer2.data);
+        free(tempBuffer);
         return self;
     }
     const UInt8 *dataSourceData = CFDataGetBytePtr(dataSource);
@@ -117,10 +128,27 @@
     free(buffer2.data);
     free(tempBuffer);
 
+    
+    CGImageAlphaInfo alphaInfo = CGImageGetBitmapInfo(imageRef) & kCGBitmapAlphaInfoMask;
+    //Since iOS8 it's not allowed anymore to create contexts with unmultiplied Alpha info
+    if (alphaInfo == kCGImageAlphaLast) {
+        alphaInfo = kCGImageAlphaPremultipliedLast;
+    }
+    if (alphaInfo == kCGImageAlphaFirst) {
+        alphaInfo = kCGImageAlphaPremultipliedFirst;
+    }
+    
+    //reset the bits
+    CGBitmapInfo newBitmapInfo = CGImageGetBitmapInfo(imageRef) & ~kCGBitmapAlphaInfoMask;
+    
+    //set the bits to the new alphaInfo
+    newBitmapInfo |= alphaInfo;
+    
+    
     //create image context from buffer
     CGContextRef ctx = CGBitmapContextCreate(buffer1.data, buffer1.width, buffer1.height,
                                              8, buffer1.rowBytes, CGImageGetColorSpace(imageRef),
-                                             CGImageGetBitmapInfo(imageRef));
+                                             newBitmapInfo);
 
     //apply tint
     if (tintColor && CGColorGetAlpha(tintColor.CGColor) > 0.0f)
@@ -576,7 +604,7 @@
 
 - (UIImage *)snapshotOfUnderlyingView
 {
-    __strong FXBlurLayer *blurLayer = [self blurPresentationLayer];
+    __strong FXBlurLayer *blurLayer = [self blurLayer];
     __strong CALayer *underlyingLayer = [self underlyingLayer];
     CGRect bounds = [blurLayer convertRect:blurLayer.bounds toLayer:underlyingLayer];
 
@@ -614,9 +642,7 @@
         {
             __strong UIView *underlyingView = self.underlyingView;
             [underlyingView drawViewHierarchyInRect:underlyingView.bounds afterScreenUpdates:YES];
-        }
-        else
-        {
+        } else {
             [underlyingLayer renderInContext:context];
         }
         [self restoreSuperviewAfterSnapshot:hiddenViews];
@@ -692,13 +718,32 @@
     self.layer.contentsScale = image.scale;
 }
 
-- (void)updateAsynchronously:(BOOL)async completion:(void (^)())completion
+- (void)updateAsynchronously:(BOOL)async completion:(void (^)(void))completion
 {
-    if ([self shouldUpdate]) {
+    if ([self shouldUpdate])
+    {
         UIImage *snapshot = [self snapshotOfUnderlyingView];
-        [self setLayerContents:[self blurredSnapshot:snapshot radius:[self blurPresentationLayer].blurRadius]];
-        if (completion) completion();
-    } else if (completion) {
+        if (async)
+        {
+            CGFloat blurRadius = self.blurRadius;
+            dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+                
+                UIImage *blurredImage = [self blurredSnapshot:snapshot radius:blurRadius];
+                dispatch_sync(dispatch_get_main_queue(), ^{
+                    
+                    [self setLayerContents:blurredImage];
+                    if (completion) completion();
+                });
+            });
+        }
+        else
+        {
+            [self setLayerContents:[self blurredSnapshot:snapshot radius:[self blurPresentationLayer].blurRadius]];
+            if (completion) completion();
+        }
+    }
+    else if (completion)
+    {
         completion();
     }
 }
